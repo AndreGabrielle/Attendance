@@ -1,0 +1,597 @@
+import qrcode
+import cv2
+import pandas as pd
+import os
+import json
+from datetime import datetime
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog
+from PIL import Image, ImageTk
+import threading
+import time
+
+class QRProfessorAttendanceSystem:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("PRMSU Professor QR Attendance System")
+        self.root.geometry("1000x750")
+        
+        # Data storage
+        self.attendance_file = "professor_attendance.csv"
+        self.professors_file = "professors.json"
+        
+        # Load existing data
+        self.load_professors()
+        self.setup_ui()
+    
+    def setup_ui(self):
+        # Create notebook for tabs
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Tab 1: Professor Registration
+        self.tab1 = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab1, text='Professor Registration')
+        
+        # Registration Form
+        ttk.Label(self.tab1, text="Professor Registration", font=('Arial', 14, 'bold')).grid(row=0, column=0, columnspan=2, pady=10)
+        
+        ttk.Label(self.tab1, text="Professor ID:").grid(row=1, column=0, padx=5, pady=5, sticky='e')
+        self.prof_id_entry = ttk.Entry(self.tab1, width=30)
+        self.prof_id_entry.grid(row=1, column=1, padx=5, pady=5)
+        
+        ttk.Label(self.tab1, text="Full Name:").grid(row=2, column=0, padx=5, pady=5, sticky='e')
+        self.name_entry = ttk.Entry(self.tab1, width=30)
+        self.name_entry.grid(row=2, column=1, padx=5, pady=5)
+        
+        ttk.Label(self.tab1, text="Department:").grid(row=3, column=0, padx=5, pady=5, sticky='e')
+        self.dept_combo = ttk.Combobox(self.tab1, width=28, values=[
+            "College of Engineering", "College of Arts and Sciences", 
+            "College of Business Administration", "College of Education",
+            "College of Criminal Justice", "College of Nursing"
+        ])
+        self.dept_combo.grid(row=3, column=1, padx=5, pady=5)
+        
+        ttk.Label(self.tab1, text="Contact Number:").grid(row=4, column=0, padx=5, pady=5, sticky='e')
+        self.contact_entry = ttk.Entry(self.tab1, width=30)
+        self.contact_entry.grid(row=4, column=1, padx=5, pady=5)
+        
+        ttk.Button(self.tab1, text="Generate Professor QR", 
+                  command=self.generate_professor_qr, 
+                  style='Accent.TButton').grid(row=5, column=0, columnspan=2, pady=20)
+        
+        # QR display for registration
+        self.reg_qr_label = ttk.Label(self.tab1, text="Professor QR Code will appear here")
+        self.reg_qr_label.grid(row=6, column=0, columnspan=2, pady=20)
+        
+        # Tab 2: Generate Attendance QR
+        self.tab2 = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab2, text='Generate Attendance QR')
+        
+        # Attendance session details
+        ttk.Label(self.tab2, text="Create Attendance Session", font=('Arial', 14, 'bold')).grid(row=0, column=0, columnspan=3, pady=10)
+        
+        ttk.Label(self.tab2, text="Session Type:").grid(row=1, column=0, padx=5, pady=5, sticky='e')
+        self.session_combo = ttk.Combobox(self.tab2, width=28, values=[
+            "Faculty Meeting", "Department Meeting", "Seminar/Training",
+            "General Assembly", "Class Observation", "Examination Duty",
+            "Research Meeting", "Community Extension", "Other"
+        ])
+        self.session_combo.grid(row=1, column=1, padx=5, pady=5)
+        
+        ttk.Label(self.tab2, text="Subject/Venue:").grid(row=2, column=0, padx=5, pady=5, sticky='e')
+        self.venue_entry = ttk.Entry(self.tab2, width=30)
+        self.venue_entry.grid(row=2, column=1, padx=5, pady=5)
+        
+        ttk.Label(self.tab2, text="Remarks:").grid(row=3, column=0, padx=5, pady=5, sticky='e')
+        self.remarks_entry = ttk.Entry(self.tab2, width=30)
+        self.remarks_entry.grid(row=3, column=1, padx=5, pady=5)
+        
+        ttk.Button(self.tab2, text="Generate Attendance QR", 
+                  command=self.generate_attendance_qr, 
+                  style='Accent.TButton').grid(row=4, column=0, columnspan=3, pady=20)
+        
+        # Attendance QR display
+        self.att_qr_label = ttk.Label(self.tab2, text="Attendance QR Code will appear here")
+        self.att_qr_label.grid(row=5, column=0, columnspan=3, pady=20)
+        
+        # Tab 3: Scan Attendance
+        self.tab3 = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab3, text='Scan Attendance')
+        
+        self.scanning = False
+        self.cap = None
+        
+        ttk.Button(self.tab3, text="Start Camera", 
+                  command=self.start_scanning).pack(pady=10)
+        ttk.Button(self.tab3, text="Stop Camera", 
+                  command=self.stop_scanning).pack(pady=5)
+        
+        self.video_label = ttk.Label(self.tab3)
+        self.video_label.pack(pady=10)
+        
+        # Status label
+        self.status_label = ttk.Label(self.tab3, text="Camera ready", font=('Arial', 10))
+        self.status_label.pack(pady=5)
+        
+        # Tab 4: View Attendance Records
+        self.tab4 = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab4, text='View Records')
+        
+        # Filters
+        filter_frame = ttk.Frame(self.tab4)
+        filter_frame.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Label(filter_frame, text="Date:").pack(side='left', padx=5)
+        self.date_filter = ttk.Entry(filter_frame, width=15)
+        self.date_filter.insert(0, datetime.now().strftime('%Y-%m-%d'))
+        self.date_filter.pack(side='left', padx=5)
+        
+        ttk.Label(filter_frame, text="Session Type:").pack(side='left', padx=5)
+        self.session_filter = ttk.Combobox(filter_frame, width=20)
+        self.session_filter.pack(side='left', padx=5)
+        
+        ttk.Button(filter_frame, text="Filter", 
+                  command=self.load_attendance).pack(side='left', padx=5)
+        ttk.Button(filter_frame, text="Clear Filters", 
+                  command=self.clear_filters).pack(side='left', padx=5)
+        
+        # Treeview for attendance records
+        columns = ('Date', 'Time', 'ProfessorID', 'Name', 'Department', 'SessionType', 'Venue', 'Status')
+        self.tree = ttk.Treeview(self.tab4, columns=columns, show='headings')
+        
+        column_widths = [100, 80, 100, 150, 150, 120, 120, 80]
+        for col, width in zip(columns, column_widths):
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=width)
+        
+        scrollbar = ttk.Scrollbar(self.tab4, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.pack(side='left', fill='both', expand=True, padx=(10,0), pady=10)
+        scrollbar.pack(side='right', fill='y', padx=(0,10), pady=10)
+        
+        # Buttons
+        btn_frame = ttk.Frame(self.tab4)
+        btn_frame.pack(fill='x', padx=10, pady=10)
+        
+        ttk.Button(btn_frame, text="Refresh", 
+                  command=self.load_attendance).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Export to Excel", 
+                  command=self.export_excel).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text="Print Report", 
+                  command=self.print_report).pack(side='left', padx=5)
+        
+        # Tab 5: Professor Directory
+        self.tab5 = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab5, text='Professor Directory')
+        
+        # Treeview for professors
+        prof_columns = ('ProfessorID', 'Name', 'Department', 'Contact', 'DateRegistered')
+        self.prof_tree = ttk.Treeview(self.tab5, columns=prof_columns, show='headings')
+        
+        prof_widths = [100, 200, 150, 120, 120]
+        for col, width in zip(prof_columns, prof_widths):
+            self.prof_tree.heading(col, text=col)
+            self.prof_tree.column(col, width=width)
+        
+        prof_scrollbar = ttk.Scrollbar(self.tab5, orient="vertical", command=self.prof_tree.yview)
+        self.prof_tree.configure(yscrollcommand=prof_scrollbar.set)
+        
+        self.prof_tree.pack(side='left', fill='both', expand=True, padx=(10,0), pady=10)
+        prof_scrollbar.pack(side='right', fill='y', padx=(0,10), pady=10)
+        
+        ttk.Button(self.tab5, text="Load Professors", 
+                  command=self.load_professor_directory).pack(pady=10)
+        
+        # Load initial data
+        self.load_attendance()
+        self.load_professor_directory()
+        
+        # Update session filter values
+        self.update_filters()
+    
+    def generate_professor_qr(self):
+        prof_id = self.prof_id_entry.get()
+        name = self.name_entry.get()
+        department = self.dept_combo.get()
+        contact = self.contact_entry.get()
+        
+        if not all([prof_id, name, department, contact]):
+            messagebox.showerror("Error", "Please fill in all fields")
+            return
+        
+        # Check if professor already exists
+        if prof_id in self.professors:
+            response = messagebox.askyesno("Update", 
+                f"Professor ID {prof_id} already exists. Update information?")
+            if not response:
+                return
+        
+        # Save professor data
+        professor_data = {
+            'id': prof_id,
+            'name': name,
+            'department': department,
+            'contact': contact,
+            'date_registered': datetime.now().strftime('%Y-%m-%d'),
+            'qr_generated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        self.professors[prof_id] = professor_data
+        self.save_professors()
+        
+        # Generate QR code
+        qr_data = {
+            'type': 'professor_id',
+            'professor_id': prof_id,
+            'name': name,
+            'department': department,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(json.dumps(qr_data))
+        qr.make(fit=True)
+        
+        img = qr.make_image(fill_color="navy", back_color="white")
+        
+        # Save and display
+        filename = f"professor_{prof_id}_{datetime.now().strftime('%Y%m%d')}.png"
+        img.save(filename)
+        
+        # Display in GUI
+        img_display = Image.open(filename)
+        img_display = img_display.resize((300, 300), Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(img_display)
+        
+        self.reg_qr_label.configure(image=photo)
+        self.reg_qr_label.image = photo
+        
+        messagebox.showinfo("Success", 
+            f"Professor QR Code Generated!\nID: {prof_id}\nName: {name}\nSaved as: {filename}")
+        
+        # Clear form
+        self.prof_id_entry.delete(0, tk.END)
+        self.name_entry.delete(0, tk.END)
+        self.dept_combo.set('')
+        self.contact_entry.delete(0, tk.END)
+        
+        # Update directory
+        self.load_professor_directory()
+    
+    def generate_attendance_qr(self):
+        session_type = self.session_combo.get()
+        venue = self.venue_entry.get()
+        remarks = self.remarks_entry.get()
+        
+        if not session_type:
+            messagebox.showerror("Error", "Please select a session type")
+            return
+        
+        # Create attendance QR data
+        attendance_data = {
+            'type': 'attendance_session',
+            'session_type': session_type,
+            'venue': venue,
+            'remarks': remarks,
+            'timestamp': datetime.now().isoformat(),
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'time': datetime.now().strftime('%H:%M:%S')
+        }
+        
+        # Generate QR code
+        qr = qrcode.QRCode(
+            version=2,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(json.dumps(attendance_data))
+        qr.make(fit=True)
+        
+        img = qr.make_image(fill_color="darkgreen", back_color="white")
+        
+        # Save and display
+        filename = f"attendance_{session_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        img.save(filename)
+        
+        # Display in GUI
+        img_display = Image.open(filename)
+        img_display = img_display.resize((350, 350), Image.Resampling.LANCZOS)
+        photo = ImageTk.PhotoImage(img_display)
+        
+        self.att_qr_label.configure(image=photo)
+        self.att_qr_label.image = photo
+        
+        messagebox.showinfo("Success", 
+            f"Attendance QR Code Generated!\nSession: {session_type}\nSaved as: {filename}")
+        
+        # Clear form
+        self.venue_entry.delete(0, tk.END)
+        self.remarks_entry.delete(0, tk.END)
+    
+    def start_scanning(self):
+        self.scanning = True
+        self.cap = cv2.VideoCapture(0)
+        self.scan_thread = threading.Thread(target=self.scan_qr_code, daemon=True)
+        self.scan_thread.start()
+        self.status_label.config(text="Scanning... Ready to scan QR codes")
+    
+    def stop_scanning(self):
+        self.scanning = False
+        if self.cap:
+            self.cap.release()
+        cv2.destroyAllWindows()
+        self.status_label.config(text="Camera stopped")
+    
+    def scan_qr_code(self):
+        from pyzbar.pyzbar import decode
+        import numpy as np
+        
+        last_scanned = {}
+        
+        while self.scanning:
+            ret, frame = self.cap.read()
+            if ret:
+                # Decode QR codes
+                decoded_objects = decode(frame)
+                current_time = time.time()
+                
+                for obj in decoded_objects:
+                    try:
+                        data = json.loads(obj.data.decode('utf-8'))
+                        qr_type = data.get('type', '')
+                        
+                        # Check if this QR was recently scanned (prevent duplicates within 5 seconds)
+                        qr_key = f"{qr_type}_{data.get('professor_id', data.get('timestamp', ''))}"
+                        if qr_key in last_scanned and (current_time - last_scanned[qr_key]) < 5:
+                            continue
+                        
+                        if qr_type == 'professor_id':
+                            self.process_professor_attendance(data)
+                            display_text = f"Professor: {data.get('name', 'Unknown')}"
+                            color = (0, 255, 0)  # Green
+                        elif qr_type == 'attendance_session':
+                            display_text = f"Session: {data.get('session_type', 'Unknown')}"
+                            color = (0, 165, 255)  # Orange
+                            # Note: Attendance sessions themselves aren't "scanned for attendance"
+                            # They're generated for professors to scan
+                            continue
+                        else:
+                            display_text = "Unknown QR Type"
+                            color = (0, 0, 255)  # Red
+                        
+                        # Mark as recently scanned
+                        last_scanned[qr_key] = current_time
+                        
+                        # Draw rectangle around QR
+                        points = obj.polygon
+                        if len(points) > 4:
+                            hull = cv2.convexHull(np.array([point for point in points], dtype=np.float32))
+                            points = hull
+                        
+                        n = len(points)
+                        for j in range(n):
+                            cv2.line(frame, points[j], points[(j+1) % n], color, 3)
+                        
+                        # Add text
+                        cv2.putText(frame, display_text, (50, 50), 
+                                  cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                        
+                        # Update status
+                        self.status_label.config(text=f"Scanned: {display_text}")
+                        
+                    except Exception as e:
+                        print(f"Error processing QR: {e}")
+                
+                # Display video
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(rgb)
+                img = img.resize((640, 480), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(image=img)
+                
+                self.video_label.configure(image=photo)
+                self.video_label.image = photo
+            
+            time.sleep(0.03)
+    
+    def process_professor_attendance(self, professor_data):
+        professor_id = professor_data.get('professor_id')
+        professor_name = professor_data.get('name', 'Unknown')
+        department = professor_data.get('department', 'Unknown')
+        
+       
+        attendance_record = {
+            'Date': datetime.now().strftime('%Y-%m-%d'),
+            'Time': datetime.now().strftime('%H:%M:%S'),
+            'ProfessorID': professor_id,
+            'Name': professor_name,
+            'Department': department,
+            'SessionType': 'Daily Check-in',  # Default, could be configured
+            'Venue': 'Main Campus',
+            'Status': 'Present'
+        }
+        
+        # Save to CSV
+        df = pd.DataFrame([attendance_record])
+        
+        if os.path.exists(self.attendance_file):
+            df.to_csv(self.attendance_file, mode='a', header=False, index=False)
+        else:
+            df.to_csv(self.attendance_file, index=False)
+        
+        print(f"Attendance recorded for Professor {professor_name}")
+        
+        # Show notification
+        self.show_attendance_notification(professor_name, department)
+    
+    def show_attendance_notification(self, name, department):
+        notification = tk.Toplevel(self.root)
+        notification.title("Attendance Recorded")
+        notification.geometry("300x150")
+        notification.configure(bg='lightgreen')
+        
+        tk.Label(notification, text="✓ ATTENDANCE RECORDED", 
+                font=('Arial', 14, 'bold'), bg='lightgreen').pack(pady=20)
+        
+        tk.Label(notification, text=f"Professor: {name}", 
+                font=('Arial', 12), bg='lightgreen').pack()
+        
+        tk.Label(notification, text=f"Department: {department}", 
+                font=('Arial', 10), bg='lightgreen').pack()
+        
+        tk.Label(notification, text=f"Time: {datetime.now().strftime('%H:%M:%S')}", 
+                font=('Arial', 10), bg='lightgreen').pack()
+        
+        # Auto-close after 3 seconds
+        notification.after(3000, notification.destroy)
+    
+    def load_attendance(self):
+        # Clear treeview
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        # Load from CSV
+        if os.path.exists(self.attendance_file):
+            df = pd.read_csv(self.attendance_file)
+            
+            # Apply filters
+            date_filter = self.date_filter.get()
+            session_filter = self.session_filter.get()
+            
+            if date_filter:
+                df = df[df['Date'] == date_filter]
+            if session_filter:
+                df = df[df['SessionType'] == session_filter]
+            
+            for _, row in df.iterrows():
+                self.tree.insert('', 'end', values=(
+                    row.get('Date', ''),
+                    row.get('Time', ''),
+                    row.get('ProfessorID', ''),
+                    row.get('Name', ''),
+                    row.get('Department', ''),
+                    row.get('SessionType', ''),
+                    row.get('Venue', ''),
+                    row.get('Status', '')
+                ))
+    
+    def load_professor_directory(self):
+        # Clear treeview
+        for item in self.prof_tree.get_children():
+            self.prof_tree.delete(item)
+        
+        # Load from professors data
+        for prof_id, prof_data in self.professors.items():
+            self.prof_tree.insert('', 'end', values=(
+                prof_id,
+                prof_data.get('name', ''),
+                prof_data.get('department', ''),
+                prof_data.get('contact', ''),
+                prof_data.get('date_registered', '')
+            ))
+    
+    def update_filters(self):
+        # Update session filter values
+        if os.path.exists(self.attendance_file):
+            df = pd.read_csv(self.attendance_file)
+            session_types = df['SessionType'].unique() if 'SessionType' in df.columns else []
+            self.session_filter['values'] = list(session_types)
+    
+    def clear_filters(self):
+        self.date_filter.delete(0, tk.END)
+        self.date_filter.insert(0, datetime.now().strftime('%Y-%m-%d'))
+        self.session_filter.set('')
+        self.load_attendance()
+    
+    def export_excel(self):
+        if os.path.exists(self.attendance_file):
+            df = pd.read_csv(self.attendance_file)
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            )
+            if filename:
+                df.to_excel(filename, index=False)
+                messagebox.showinfo("Success", f"Data exported to {filename}")
+    
+    def print_report(self):
+        # Simple print report functionality
+        if os.path.exists(self.attendance_file):
+            df = pd.read_csv(self.attendance_file)
+            date_filter = self.date_filter.get()
+            
+            if date_filter:
+                df = df[df['Date'] == date_filter]
+            
+            total_attendance = len(df)
+            unique_professors = df['ProfessorID'].nunique() if 'ProfessorID' in df.columns else 0
+            
+            report = f"""
+            Attendance Report
+            Date: {date_filter if date_filter else 'All Dates'}
+            Total Records: {total_attendance}
+            Unique Professors: {unique_professors}
+            
+            By Department:
+            """
+            
+            if 'Department' in df.columns:
+                dept_counts = df['Department'].value_counts()
+                for dept, count in dept_counts.items():
+                    report += f"\n{dept}: {count} records"
+            
+            messagebox.showinfo("Attendance Report", report)
+    
+    def load_professors(self):
+        if os.path.exists(self.professors_file):
+            with open(self.professors_file, 'r') as f:
+                self.professors = json.load(f)
+        else:
+            # Sample professor data
+            self.professors = {
+                "PROF001": {
+                    "name": "Dr. Juan Dela Cruz",
+                    "department": "College of Engineering",
+                    "contact": "09171234567",
+                    "date_registered": "2024-01-15",
+                    "qr_generated": "2024-01-15 10:30:00"
+                },
+                "PROF002": {
+                    "name": "Dr. Maria Santos",
+                    "department": "College of Arts and Sciences",
+                    "contact": "09172345678",
+                    "date_registered": "2024-01-16",
+                    "qr_generated": "2024-01-16 09:15:00"
+                }
+            }
+            self.save_professors()
+    
+    def save_professors(self):
+        with open(self.professors_file, 'w') as f:
+            json.dump(self.professors, f, indent=2)
+    
+    def on_closing(self):
+        self.stop_scanning()
+        self.root.destroy()
+
+# Main application
+if __name__ == "__main__":
+    root = tk.Tk()
+    
+    # Style configuration
+    style = ttk.Style()
+    style.theme_use('clam')
+    
+    # Configure accent button style
+    style.configure('Accent.TButton', font=('Arial', 10, 'bold'), padding=10)
+    
+    app = QRProfessorAttendanceSystem(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
+    root.mainloop()
